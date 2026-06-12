@@ -895,6 +895,45 @@ void uWS_App_missingServerName(const FunctionCallbackInfo<Value> &args) {
     args.GetReturnValue().Set(args.This());
 }
 
+/* HTTP timeout configuration */
+template <typename APP>
+void uWS_App_setIdleTimeout(const FunctionCallbackInfo<Value> &args) {
+    APP *app = (APP *) getInternalPointer(args.This());
+    Isolate *isolate = args.GetIsolate();
+
+    int seconds = args[0]->Int32Value(isolate->GetCurrentContext()).ToChecked();
+    app->setIdleTimeout(seconds);
+
+    args.GetReturnValue().Set(args.This());
+}
+
+template <typename APP>
+void uWS_App_setResponseTimeout(const FunctionCallbackInfo<Value> &args) {
+    APP *app = (APP *) getInternalPointer(args.This());
+    Isolate *isolate = args.GetIsolate();
+
+    int seconds = args[0]->Int32Value(isolate->GetCurrentContext()).ToChecked();
+    app->setResponseTimeout(seconds);
+
+    args.GetReturnValue().Set(args.This());
+}
+
+template <typename APP>
+void uWS_App_getIdleTimeout(const FunctionCallbackInfo<Value> &args) {
+    APP *app = (APP *) getInternalPointer(args.This());
+    Isolate *isolate = args.GetIsolate();
+
+    args.GetReturnValue().Set(Integer::New(isolate, app->getIdleTimeout()));
+}
+
+template <typename APP>
+void uWS_App_getResponseTimeout(const FunctionCallbackInfo<Value> &args) {
+    APP *app = (APP *) getInternalPointer(args.This());
+    Isolate *isolate = args.GetIsolate();
+
+    args.GetReturnValue().Set(Integer::New(isolate, app->getResponseTimeout()));
+}
+
 template <typename APP>
 void uWS_App(const FunctionCallbackInfo<Value> &args) {
 
@@ -1060,6 +1099,12 @@ void uWS_App(const FunctionCallbackInfo<Value> &args) {
         appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "addServerName", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, uWS_App_addServerName<APP>, args.Data()));
         appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "removeServerName", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, uWS_App_removeServerName<APP>, args.Data()));
         appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "missingServerName", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, uWS_App_missingServerName<APP>, args.Data()));
+
+        /* HTTP timeout configuration */
+        appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "setIdleTimeout", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, uWS_App_setIdleTimeout<APP>, args.Data()));
+        appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "setResponseTimeout", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, uWS_App_setResponseTimeout<APP>, args.Data()));
+        appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getIdleTimeout", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, uWS_App_getIdleTimeout<APP>, args.Data()));
+        appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getResponseTimeout", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, uWS_App_getResponseTimeout<APP>, args.Data()));
 
     }
 
