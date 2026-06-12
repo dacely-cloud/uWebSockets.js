@@ -127,7 +127,7 @@ jobs:
           # Create package.json
           cat > release/package.json << EOF
           {
-            "name": "@dacely-cloud/uwebsockets.js",
+            "name": "@dacely/uwebsockets.js",
             "version": "${VERSION}",
             "license": "Apache-2.0",
             "main": "uws.js",
