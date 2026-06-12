@@ -1,7 +1,13 @@
 name: Build
+
 on:
   push:
     branches: [ master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ master ]
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -10,33 +16,165 @@ jobs:
       matrix:
         os: [windows-latest, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
       - name: Setup Windows
         if: matrix.os == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
+
       - name: Setup NASM for Windows
         if: matrix.os == 'windows-latest'
         uses: ilammy/setup-nasm@v1.2.1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 26
-      - name: Update binaries
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
-          git clone --recursive https://github.com/uNetworking/uWebSockets.js.git
-          cd uWebSockets.js
-          ${{ matrix.os == 'windows-latest' && 'nmake' || 'make' }}
-          ls dist
-          cd tests && npm install ws && node smoke.js && cd ..
-          ls dist
-          git fetch origin binaries:binaries
-          git checkout binaries
-          cp dist/*.node .
-          cp dist/*.js .
-          git rev-parse master > source_commit
-          ls
-          ${{ matrix.os != 'windows-latest' && 'git checkout master docs/index.d.ts && mv docs/index.d.ts .' || '' }}
-          git status
-          git config --global user.email "alexhultman@gmail.com"
-          git config --global user.name "Alex Hultman"
-          git commit -a -m "[GitHub Actions] Updated ${{ matrix.os }} binaries" || true
-          git push "https://unetworkingab:${{ secrets.SECRET }}@github.com/uNetworking/uWebSockets.js" binaries
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 cmake ninja-build golang-go libuv1-dev
+
+      - name: Build
+        run: ${{ matrix.os == 'windows-latest' && 'nmake' || 'make' }}
+
+      - name: List built files
+        run: ls dist
+
+      - name: Run smoke tests
+        run: |
+          cd tests
+          npm install ws
+          node smoke.js
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}
+          path: |
+            dist/*.node
+            dist/*.js
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release package
+        run: |
+          mkdir -p release
+
+          # Copy all .node binaries
+          cp artifacts/binaries-*/*.node release/
+
+          # Copy uws.js
+          cp artifacts/binaries-ubuntu-24.04/uws.js release/
+
+          # Copy type definitions
+          cp docs/index.d.ts release/
+
+          # Create ESM wrapper
+          cat > release/ESM_wrapper.mjs << 'EOF'
+          import uws from "./uws.js";
+          export default uws;
+          export const App = uws.App;
+          export const SSLApp = uws.SSLApp;
+          export const LIBUS_LISTEN_EXCLUSIVE_PORT = uws.LIBUS_LISTEN_EXCLUSIVE_PORT;
+          export const us_listen_socket_close = uws.us_listen_socket_close;
+          export const us_socket_local_port = uws.us_socket_local_port;
+          export const DISABLED = uws.DISABLED;
+          export const SHARED_COMPRESSOR = uws.SHARED_COMPRESSOR;
+          export const SHARED_DECOMPRESSOR = uws.SHARED_DECOMPRESSOR;
+          export const DEDICATED_DECOMPRESSOR = uws.DEDICATED_DECOMPRESSOR;
+          export const DEDICATED_COMPRESSOR = uws.DEDICATED_COMPRESSOR;
+          export const DEDICATED_COMPRESSOR_3KB = uws.DEDICATED_COMPRESSOR_3KB;
+          export const DEDICATED_COMPRESSOR_4KB = uws.DEDICATED_COMPRESSOR_4KB;
+          export const DEDICATED_COMPRESSOR_8KB = uws.DEDICATED_COMPRESSOR_8KB;
+          export const DEDICATED_COMPRESSOR_16KB = uws.DEDICATED_COMPRESSOR_16KB;
+          export const DEDICATED_COMPRESSOR_32KB = uws.DEDICATED_COMPRESSOR_32KB;
+          export const DEDICATED_COMPRESSOR_64KB = uws.DEDICATED_COMPRESSOR_64KB;
+          export const DEDICATED_COMPRESSOR_128KB = uws.DEDICATED_COMPRESSOR_128KB;
+          export const DEDICATED_COMPRESSOR_256KB = uws.DEDICATED_COMPRESSOR_256KB;
+          EOF
+
+          # Extract version from tag
+          VERSION=${GITHUB_REF#refs/tags/v}
+
+          # Create package.json
+          cat > release/package.json << EOF
+          {
+            "name": "@dacely-cloud/uwebsockets.js",
+            "version": "${VERSION}",
+            "license": "Apache-2.0",
+            "main": "uws.js",
+            "types": "./index.d.ts",
+            "exports": {
+              "import": "./ESM_wrapper.mjs",
+              "require": "./uws.js",
+              "types": "./index.d.ts"
+            },
+            "repository": {
+              "type": "git",
+              "url": "git+https://github.com/dacely-cloud/uWebSockets.js.git"
+            },
+            "publishConfig": {
+              "access": "public"
+            }
+          }
+          EOF
+
+          ls -la release/
+
+      - name: Publish to npm
+        run: |
+          cd release
+          npm publish --access public --provenance
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update binaries branch
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          git fetch origin binaries || true
+          git checkout binaries || git checkout --orphan binaries
+
+          rm -f *.node *.js *.mjs *.d.ts package.json
+          cp release/* .
+
+          git add -A
+          git commit -m "Update binaries for ${GITHUB_REF#refs/tags/}" || true
+          git push origin binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
